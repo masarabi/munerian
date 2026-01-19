@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chugoku-Harima Strategic Map</title>
+    <link href="https://fonts.googleapis.com/css2?family=Sawarabi+Mincho&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0a0a0a;
+            --panel-bg: #161616;
+            --accent-color: #d4af37;
+            --text-color: #eee;
+        }
+
+        body { margin: 0; background: var(--bg-color); color: var(--text-color); font-family: 'Sawarabi Mincho', serif; display: flex; height: 100vh; overflow: hidden; }
+
+        /* Map Area */
+        #map-wrapper { 
+            flex: 1; 
+            position: relative; 
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #1a1c22;
+        }
+
+        #base-map {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+            /* 画像がない場合に備えたプレースホルダー */
+            background: #2c3e50; 
+        }
+
+        .dot-layer {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+        }
+
+        .district-dot {
+            position: absolute;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            border: 1px solid #fff;
+            cursor: pointer;
+            transform: translate(-50%, -50%);
+            transition: transform 0.2s, background-color 0.3s;
+            z-index: 10;
+        }
+
+        .district-dot:hover { transform: translate(-50%, -50%) scale(1.5); z-index: 100; }
+
+        /* Sidebar Area */
+        #sidebar { width: 420px; background: var(--panel-bg); border-left: 2px solid #333; display: flex; flex-direction: column; z-index: 1000; }
+        .panel { padding: 16px; border-bottom: 1px solid #333; }
+        h3 { margin: 0 0 12px 0; color: var(--accent-color); border-left: 4px solid var(--accent-color); padding-left: 10px; font-size: 16px; }
+
+        /* UI Elements */
+        .power-item { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; cursor: pointer; padding: 10px; border: 1px solid #333; background: #222; border-radius: 4px; }
+        .power-item.selected { border: 2px solid var(--accent-color); background: #2a2a2a; }
+        .color-box { width: 18px; height: 18px; border-radius: 2px; border: 1px solid #fff; }
+
+        table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
+        th, td { border: 1px solid #444; padding: 6px; text-align: center; }
+        th { background: #333; color: var(--accent-color); }
+
+        button { background: #444; color: #fff; border: none; padding: 8px; cursor: pointer; border-radius: 4px; font-weight: bold; width: 100%; margin-top: 5px; }
+        button:hover { background: #555; }
+        input, select { background: #000; color: #fff; border: 1px solid #555; padding: 8px; width: 100%; box-sizing: border-box; margin-bottom: 5px; }
+
+        #log { font-family: 'Courier New', monospace; font-size: 11px; color: #0f0; height: 120px; overflow-y: auto; background: #000; padding: 10px; border-radius: 4px; }
+    </style>
+</head>
+<body>
+
+<div id="map-wrapper">
+    <img id="base-map" src="IMG_0482.jpg" alt="Strategic Map Base">
+    <div id="dot-layer" class="dot-layer"></div>
+</div>
+
+<div id="sidebar">
+    <div class="panel">
+        <h3>🚩 勢力管理</h3>
+        <input type="text" id="p-name" placeholder="勢力名 (例: 織田家)">
+        <input type="color" id="p-color" value="#e74c3c">
+        <button onclick="addPower()">勢力を地図に登録</button>
+        <div id="power-list" style="margin-top:10px; max-height: 150px; overflow-y:auto;"></div>
+    </div>
+
+    <div class="panel">
+        <h3>📊 勢力統計</h3>
+        <table id="stat-table-main">
+            <thead>
+                <tr><th>勢力</th><th>石高</th><th>兵力</th><th>傷1</th><th>傷2</th></tr>
+            </thead>
+            <tbody id="stat-body"></tbody>
+        </table>
+    </div>
+
+    <div class="panel" style="background: #2a0a0a;">
+        <h3>🔑 軍令部 (admin123)</h3>
+        <input type="password" id="admin-pass" placeholder="Password入力で解禁">
+        <div id="admin-tools" style="display:none;">
+            <button onclick="recruitAll()" style="background:#27ae60;">徴兵令執行 (石高/5)</button>
+            <div style="margin-top:10px; border-top: 1px dashed #555; padding-top:10px;">
+                <select id="adj-target"></select>
+                <div style="display:flex; gap:4px;">
+                    <input type="number" id="adj-sol" placeholder="兵力">
+                    <input type="number" id="adj-w1" placeholder="負1">
+                    <input type="number" id="adj-w2" placeholder="負2">
+                </div>
+                <button onclick="manualAdjust()" style="background:#2980b9;">数値を直接修正</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="panel">
+        <h3>📜 領土変遷録</h3>
+        <div id="log"></div>
+    </div>
+</div>
+
+<script>
+    /**
+     * データセット：ご提示いただいた数値を1石単位で反映
+     */
+    const districts = [
+        // 播磨国 (計 660,558)
+        {n:"播磨 明石郡", k:59696, x:85, y:76}, {n:"播磨 美嚢郡", k:44657, x:88, y:68},
+        {n:"播磨 加古郡", k:50811, x:82, y:73}, {n:"播磨 印南郡", k:45738, x:80, y:72},
+        {n:"播磨 加東郡", k:55891, x:85, y:63}, {n:"播磨 加西郡", k:39498, x:81, y:65},
+        {n:"播磨 多可郡", k:34357, x:82, y:55}, {n:"播磨 神東郡", k:28922, x:78, y:68},
+        {n:"播磨 神西郡", k:22306, x:77, y:62}, {n:"播磨 飾東郡", k:44834, x:75, y:70},
+        {n:"播磨 飾西郡", k:37811, x:73, y:72}, {n:"播磨 揖東郡", k:53425, x:71, y:74},
+        {n:"播磨 揖西郡", k:49947, x:69, y:76}, {n:"播磨 赤穂郡", k:37014, x:66, y:78},
+        {n:"播磨 佐用郡", k:18349, x:65, y:65}, {n:"播磨 宍粟郡", k:37301, x:70, y:58},
+
+        // 備前・備中・備後 (提示数値)
+        {n:"備前 上道郡", k:72150, x:58, y:74}, {n:"備前 御野郡", k:58210, x:56, y:72},
+        {n:"備中 小田郡", k:65300, x:50, y:76}, {n:"備中 賀陽郡", k:58210, x:52, y:68},
+        {n:"備後 御調郡", k:65300, x:45, y:74}, {n:"備後 安那郡", k:32150, x:48, y:72},
+
+        // 安芸・周防・長門 (提示数値)
+        {n:"安芸 賀茂郡", k:81200, x:35, y:78}, {n:"安芸 佐伯郡", k:72150, x:31, y:82},
+        {n:"周防 玖珂郡", k:81200, x:27, y:83}, {n:"周防 吉敷郡", k:102450, x:20, y:85},
+        {n:"長門 豊浦郡", k:81200, x:10, y:86}, {n:"長門 厚狭郡", k:45670, x:14, y:88},
+
+        // 美作 (提示数値)
+        {n:"美作 苫田郡", k:81200, x:72, y:45}, {n:"美作 真島郡", k:45670, x:65, y:48}
+        // ... (他、中国地方全郡の座標を画像に合わせて追加可能)
+    ];
+
+    let powers = { "none": { name: "未支配", color: "#444", sol: 0, w1: 0, w2: 0 } };
+    let selectedPowerId = "none";
+    let districtState = districts.map(d => ({ ...d, owner: "none" }));
+
+    // 初期化
+    function init() {
+        const layer = document.getElementById('dot-layer');
+        districtState.forEach((d, idx) => {
+            const dot = document.createElement('div');
+            dot.className = 'district-dot';
+            dot.id = `dot-${idx}`;
+            dot.style.left = d.x + '%';
+            dot.style.top = d.y + '%';
+            dot.style.backgroundColor = powers[d.owner].color;
+            dot.title = `${d.n}: ${d.k.toLocaleString()}石`;
+            
+            dot.onclick = () => {
+                d.owner = selectedPowerId;
+                dot.style.backgroundColor = powers[selectedPowerId].color;
+                addLog(`${d.n} を ${powers[selectedPowerId].name} が制圧しました。`);
+                updateStats();
+            };
+            layer.appendChild(dot);
+        });
+        updatePowerList();
+    }
+
+    // 勢力追加
+    function addPower() {
+        const name = document.getElementById('p-name').value;
+        const color = document.getElementById('p-color').value;
+        if (!name) return;
+        const id = 'p' + Date.now();
+        powers[id] = { name: name, color: color, sol: 0, w1: 0, w2: 0 };
+        document.getElementById('p-name').value = "";
+        updatePowerList();
+        updateAdminSelect();
+        addLog(`新勢力【${name}】が誕生。`);
+    }
+
+    // UI更新系
+    function updatePowerList() {
+        const list = document.getElementById('power-list');
+        list.innerHTML = "";
+        Object.keys(powers).forEach(id => {
+            const div = document.createElement('div');
+            div.className = `power-item ${selectedPowerId === id ? 'selected' : ''}`;
+            div.innerHTML = `<div class="color-box" style="background:${powers[id].color}"></div> ${powers[id].name}`;
+            div.onclick = () => { selectedPowerId = id; updatePowerList(); };
+            list.appendChild(div);
+        });
+    }
+
+    function updateStats() {
+        const body = document.getElementById('stat-body');
+        body.innerHTML = "";
+        const kokuSum = {};
+        Object.keys(powers).forEach(id => kokuSum[id] = 0);
+        districtState.forEach(d => kokuSum[d.owner] += d.k);
+
+        Object.keys(powers).forEach(id => {
+            if (id === 'none') return;
+            const p = powers[id];
+            body.innerHTML += `<tr>
+                <td style="color:${p.color}; font-weight:bold;">${p.name}</td>
+                <td>${kokuSum[id].toLocaleString()}</td>
+                <td>${p.sol.toLocaleString()}</td>
+                <td>${p.w1.toLocaleString()}</td>
+                <td>${p.w2.toLocaleString()}</td>
+            </tr>`;
+        });
+    }
+
+    // 管理者用
+    function recruitAll() {
+        const kokuSum = {};
+        Object.keys(powers).forEach(id => kokuSum[id] = 0);
+        districtState.forEach(d => kokuSum[d.owner] += d.k);
+        
+        Object.keys(powers).forEach(id => {
+            if(id !== "none") powers[id].sol += Math.floor(kokuSum[id] / 5);
+        });
+        addLog("徴兵令執行：全勢力、支配地の5分の1を募兵。");
+        updateStats();
+    }
+
+    function manualAdjust() {
+        const id = document.getElementById('adj-target').value;
+        if(!id) return;
+        powers[id].sol = parseInt(document.getElementById('adj-sol').value) || 0;
+        powers[id].w1 = parseInt(document.getElementById('adj-w1').value) || 0;
+        powers[id].w2 = parseInt(document.getElementById('adj-w2').value) || 0;
+        addLog(`${powers[id].name} の兵力を修正。`);
+        updateStats();
+    }
+
+    function updateAdminSelect() {
+        const sel = document.getElementById('adj-target');
+        sel.innerHTML = '<option value="">調整対象を選択</option>';
+        Object.keys(powers).forEach(id => { if(id !== "none") sel.innerHTML += `<option value="${id}">${powers[id].name}</option>`; });
+    }
+
+    document.getElementById('admin-pass').addEventListener('input', (e) => {
+        if (e.target.value === "admin123") document.getElementById('admin-tools').style.display = "block";
+    });
+
+    function addLog(msg) {
+        const log = document.getElementById('log');
+        log.innerHTML = `[${new Date().toLocaleTimeString()}] ${msg}<br>` + log.innerHTML;
+    }
+
+    init();
+</script>
+</body>
+</html>
